@@ -36,17 +36,31 @@ int url_parse (const char *url_str, URL *url)
 
   USERINFO = UNRESERVED | PCT_ENCODED | SUB_DELIMS | ":";
 
-  DEC_OCT = DIGIT | [1-9] DIGIT | "1" DIGIT{2} | "2" [0-4] DIGIT | "25" [0-5] ;
-
-  IPV4ADDR = DEC_OCT "." DEC_OCT "." DEC_OCT "." DEC_OCT;
+  IPV4SEG  = DIGIT | [1-9] DIGIT | "1" DIGIT{2} | "2" [0-4] DIGIT | "25" [0-5] ;
+  IPV4ADDR = (IPV4SEG"."){3}IPV4SEG;
+  IPV6SEG  = [0-9a-fA-F]{1,4};
+  IPV6ADDR = "[" (
+    (IPV6SEG":"){7,7}IPV6SEG|                       // 1:2:3:4:5:6:7:8
+    (IPV6SEG":"){1,7}":"|                           // 1::                                 1:2:3:4:5:6:7::
+    (IPV6SEG":"){1,6}":"IPV6SEG|                    // 1::8               1:2:3:4:5:6::8   1:2:3:4:5:6::8
+    (IPV6SEG":"){1,5}(":"IPV6SEG){1,2}|             // 1::7:8             1:2:3:4:5::7:8   1:2:3:4:5::8
+    (IPV6SEG":"){1,4}(":"IPV6SEG){1,3}|             // 1::6:7:8           1:2:3:4::6:7:8   1:2:3:4::8
+    (IPV6SEG":"){1,3}(":"IPV6SEG){1,4}|             // 1::5:6:7:8         1:2:3::5:6:7:8   1:2:3::8
+    (IPV6SEG":"){1,2}(":"IPV6SEG){1,5}|             // 1::4:5:6:7:8       1:2::4:5:6:7:8   1:2::8
+    IPV6SEG":"((":"IPV6SEG){1,6})|                  // 1::3:4:5:6:7:8     1::3:4:5:6:7:8   1::8
+    ":"((":"IPV6SEG){1,7}|":")|                     // ::2:3:4:5:6:7:8    ::2:3:4:5:6:7:8  ::8
+    "fe80:"(":"IPV6SEG){0,4}"%"[0-9a-zA-Z]{1,}|     // fe80::7:8%eth0     fe80::7:8%1
+    "::"("ffff"(":0"{1,4}){0,1}":"){0,1}IPV4ADDR|   // ::255.255.255.255  ::ffff:255.255.255.255  ::ffff:0:255.255.255.255
+    (IPV6SEG":"){1,4}":"IPV4ADDR                    // 2001:db8:3:4::192.0.2.33  64:ff9b::192.0.2.33
+  ) "]";
 
   H16 = HEXDIG{1,4};
 
   REGNAME = UNRESERVED | PCT_ENCODED | SUB_DELIMS ;
 
   // scheme
-  * { return 0; }
-
+  * { --url_str; goto hier_part; }
+  EOF { return 0;}
   ALPHA (ALPHA | DIGIT | [+.-])* ":" {
     int len = url_str - src - 1;
     url->scheme = get_lex(src, &pos, len);
@@ -57,14 +71,14 @@ int url_parse (const char *url_str, URL *url)
 
 hier_part:
 /*!re2c
-  * { goto hier_part_path; }
-  EOF { return 0;}
+  * { --url_str; goto hier_part_host; }
+  EOF { return 0; }
   "//"  { pos +=2; goto hier_part_authority; }
 */
 
 hier_part_authority:
 /*!re2c
-  [^] { url_str--; goto hier_part_host; }
+  * { url_str--; goto hier_part_host; }
   EOF { return 0;}
   USERINFO* "@" {
     int len = url_str - src - pos - 1; // unshift 1 char for "@"
@@ -76,8 +90,8 @@ hier_part_authority:
 
 hier_part_host:
 /*!re2c
+  * { goto hier_part_path; }
   EOF { return 0;}
-  * { return 0; }
   "" / "/" {
     url->host->type = UNKNOWN;
     goto hier_part_path;
@@ -100,7 +114,7 @@ hier_part_host:
     free (name);
     goto hier_part_port;
   }
-  "[" [^\]]+ "]" {
+  IPV6ADDR {
     pos++; // shift "["
     int len = url_str - src - pos - 1; // skip "]"
     url->host->type = IPV6ADDR;

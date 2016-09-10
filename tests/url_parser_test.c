@@ -70,6 +70,21 @@ static void test_url_parser_hier_ipv4 (void **state)
   url_free (url);
 }
 
+static void test_url_parser_hier_ipv4_noscheme (void **state)
+{
+  URL *url = url_create();
+  const char *url_str = "//143.5.88.91";
+  assert_int_equal (1, url_parse (url_str, url));
+  assert_string_equal (url->host->name, "143.5.88.91");
+  url_free (url);
+
+  url = url_create();
+  const char *url_str2 = "143.5.88.91";
+  assert_int_equal (1, url_parse (url_str2, url));
+  assert_string_equal (url->host->name, "143.5.88.91");
+  url_free (url);
+}
+
 static void test_url_parser_hier_ipv4_port (void **state)
 {
   URL *url = url_create();
@@ -92,12 +107,38 @@ static void test_url_parser_hier_ipv6 (void **state)
   url_free (url);
 }
 
+static void test_url_parser_hier_ipv6_noscheme (void **state)
+{
+  URL *url = url_create();
+  const char *url_str = "//[2000::FF:1BAC]";
+  assert_int_equal (1, url_parse (url_str, url));
+  assert_string_equal (url->host->name, "2000::FF:1BAC");
+  url_free (url);
+
+  url = url_create();
+  const char *url_str2 = "[2000::FF:1BAC]";
+  assert_int_equal (1, url_parse (url_str2, url));
+  assert_string_equal (url->host->name, "2000::FF:1BAC");
+  url_free (url);
+}
+
 static void test_url_parser_hier_ipv6_port (void **state)
 {
   URL *url = url_create();
   const char *url_str = "ftp://[::ffff:204.152.189.116]:8899/index.html";
   assert_int_equal (1, url_parse (url_str, url));
   assert_string_equal (url->host->name, "::ffff:204.152.189.116");
+  assert_int_equal (IPV6ADDR, url->host->type);
+  assert_int_equal (8899, url->port);
+  url_free (url);
+}
+
+static void test_url_parser_hier_ipv6_local (void **state)
+{
+  URL *url = url_create();
+  const char *url_str = "ftp://[fe80::21b:63ff:feab:e6a6\%eth0]:8899/index.html";
+  assert_int_equal (1, url_parse (url_str, url));
+  assert_string_equal (url->host->name, "fe80::21b:63ff:feab:e6a6\%eth0");
   assert_int_equal (IPV6ADDR, url->host->type);
   assert_int_equal (8899, url->port);
   url_free (url);
@@ -180,9 +221,12 @@ int main(int argc, const char *argv[])
     cmocka_unit_test(test_url_parser_hier_regname),
     cmocka_unit_test(test_url_parser_hier_regname_port),
     cmocka_unit_test(test_url_parser_hier_ipv4),
+    cmocka_unit_test(test_url_parser_hier_ipv4_noscheme),
     cmocka_unit_test(test_url_parser_hier_ipv4_port),
     cmocka_unit_test(test_url_parser_hier_ipv6),
+    cmocka_unit_test(test_url_parser_hier_ipv6_noscheme),
     cmocka_unit_test(test_url_parser_hier_ipv6_port),
+    cmocka_unit_test(test_url_parser_hier_ipv6_local),
     cmocka_unit_test(test_url_parser_hier_ipvfuture),
     cmocka_unit_test(test_url_parser_hier_ipvfuture_port),
     cmocka_unit_test(test_url_parser_path),
