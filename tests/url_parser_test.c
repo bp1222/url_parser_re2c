@@ -8,9 +8,7 @@
 static void test_url_parser_fail (void **state)
 {
   URL *url = url_create();
-  assert_int_equal (0, url_parse ("asdas", url));
   assert_int_equal (0, url_parse ("", url));
-  assert_int_equal (0, url_parse ("-http://qwerty.com/asd", url));
   url_free (url);
 }
 
@@ -22,12 +20,23 @@ static void test_url_parser_scheme (void **state)
   assert_string_equal(url->scheme, "http");
   assert_null (url->port);
   assert_null (url->userinfo);
+  url_free(url);
 
+  url = url_create();
   const char *url_str1 = "ldap://1.1.1.1/pub/ietf/uri/#Related";
   assert_int_equal (1, url_parse (url_str1, url));
   assert_string_equal(url->scheme, "ldap");
   assert_null (url->port);
   assert_null (url->userinfo);
+  url_free(url);
+
+  url = url_create();
+  const char *url_str2 = "mailto:test@example.org";
+  assert_int_equal (1, url_parse (url_str2, url));
+  assert_string_equal(url->scheme, "mailto");
+  assert_null (url->port);
+  assert_null (url->userinfo);
+  assert_string_equal (url->path, "test@example.org");
   url_free (url);
 }
 
@@ -40,11 +49,13 @@ static void test_url_parser_hier_regname (void **state)
   assert_int_equal (REGNAME, url->host->type);
   assert_null (url->port);
   assert_null (url->userinfo);
+  url_free (url);
 
-  // null hier part
+  url = url_create();
   const char *url_str_1 = "file:///etc/hosts";
   assert_int_equal (1, url_parse (url_str_1, url));
   assert_int_equal (UNKNOWN, url->host->type);
+  assert_string_equal(url->path, "/etc/hosts");
   url_free (url);
 }
 
@@ -77,12 +88,6 @@ static void test_url_parser_hier_ipv4_noscheme (void **state)
   assert_int_equal (1, url_parse (url_str, url));
   assert_string_equal (url->host->name, "143.5.88.91");
   url_free (url);
-
-  url = url_create();
-  const char *url_str2 = "143.5.88.91";
-  assert_int_equal (1, url_parse (url_str2, url));
-  assert_string_equal (url->host->name, "143.5.88.91");
-  url_free (url);
 }
 
 static void test_url_parser_hier_ipv4_port (void **state)
@@ -112,12 +117,6 @@ static void test_url_parser_hier_ipv6_noscheme (void **state)
   URL *url = url_create();
   const char *url_str = "//[2000::FF:1BAC]";
   assert_int_equal (1, url_parse (url_str, url));
-  assert_string_equal (url->host->name, "2000::FF:1BAC");
-  url_free (url);
-
-  url = url_create();
-  const char *url_str2 = "[2000::FF:1BAC]";
-  assert_int_equal (1, url_parse (url_str2, url));
   assert_string_equal (url->host->name, "2000::FF:1BAC");
   url_free (url);
 }

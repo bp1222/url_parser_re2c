@@ -2,226 +2,270 @@
 #include <string.h>
 #include "url_parser.h"
 
-int url_parse (const char *url_str, URL *url)
+const char *marker;
+const char *url_str;
+
+const char *YYMARKER;
+
+/*!re2c
+    re2c:define:YYCTYPE = "unsigned char";
+    re2c:define:YYCURSOR = url_str;
+    re2c:yyfill:enable = 0;
+
+    EOF = "\x00";
+    ALPHA = [a-zA-Z];
+    DIGIT = [0-9];
+    HEXDIG = [0-9a-fA-F];
+    SUB_DELIMS = [!$&'()*+,;=];
+    GEN_DELIMS = [:/?#\[\]@];
+    RESERVED = GEN_DELIMS | SUB_DELIMS;
+    UNRESERVED = ALPHA | DIGIT | [-._~];
+    PCT_ENCODED = "%" HEXDIG HEXDIG;
+    PCHAR = UNRESERVED | PCT_ENCODED | SUB_DELIMS | ":" | "@";
+*/
+
+int url_parse_scheme(URL *url)
 {
-  const char *marker;
-  const char *ctxmarker;
-  const char *src = url_str;
-  int pos = 0;
+    marker = url_str;
 /*!re2c
-  re2c:define:YYCTYPE = "unsigned char";
-  re2c:define:YYCURSOR = url_str;
-  re2c:define:YYMARKER = marker;
-  re2c:define:YYCTXMARKER = ctxmarker;
-  re2c:yyfill:enable = 0;
+    SCHEME = ALPHA (ALPHA | DIGIT | [+-.])+ ":";
 
-  EOF = "\x00";
-  ALPHA = [a-zA-Z];
-  DIGIT = [0-9];
-  HEXDIG = [0-9a-fA-F];
+    EOF { url_str--; return 0; }
+    "" { return 0; }
+    SCHEME {
+        int len = url_str - marker - 1;
+        url->scheme = get_token(len);
+        return 1;
+    }
+*/
+}
 
-  SUB_DELIMS = [!$&'()*+,;=] ;
-  GEN_DELIMS = [:/?#\[\]@]   ;
+void url_parse_authority_userinfo (URL *url)
+{
+    marker = url_str;
+/*!re2c
+    USERINFO = (UNRESERVED | PCT_ENCODED | SUB_DELIMS | ":")*;
 
-  RESERVED = GEN_DELIMS | SUB_DELIMS ;
-  UNRESERVED = ALPHA | DIGIT | [-._~] ;
+    EOF { url_str--; return; }
+    "" { return; }
+    USERINFO "@" {
+        int len = url_str - marker - 1;
+        char* userinfo = get_token(len);
+        url->userinfo = userinfo;
+        return;
+    }
+*/
+}
 
-  PCT_ENCODED = "%" HEXDIG HEXDIG ;
+void url_parse_authority_host (URL *url)
+{
+    marker = url_str;
+    int incr = 0;
+/*!re2c
+    //
+    // IP Address Formats
+    //
+    DEC_OCTET = DIGIT | [1-9] DIGIT | "1" DIGIT{2} | "2" [0-4] DIGIT | "25" [0-5];
+    IPV4ADDR = (DEC_OCTET "."){3} DEC_OCTET;
+    H16 = HEXDIG{1,4};
+    LS32 = (H16 ":" H16) | IPV4ADDR;
+    IPV6ADDR = "[" (
+        (H16 ":"){7,7} H16|
+        (H16 ":" ){1,7} ":" |
+        (H16 ":" ){1,6} ":" H16|
+        (H16 ":" ){1,5}( ":" H16){1,2}|
+        (H16 ":" ){1,4}( ":" H16){1,3}|
+        (H16 ":" ){1,3}( ":" H16){1,4}|
+        (H16 ":" ){1,2}( ":" H16){1,5}|
+        H16 ":" (( ":" H16){1,6})|
+        ":" (( ":" H16){1,7}| ":" )|
+        "fe80:" ( ":" H16){0,4} "%" [0-9a-zA-Z]{1,}|
+        "::" ( "ffff" ( ":0" {1,4}){0,1} ":" ){0,1}IPV4ADDR|
+        (H16 ":"){1,4} ":" IPV4ADDR
+    ) "]";
+    IPVFUTURE = "[v" HEXDIG+ "." (UNRESERVED | SUB_DELIMS | ":")+ "]";
+    REG_NAME = (UNRESERVED | PCT_ENCODED | SUB_DELIMS)+;
 
-  PCHAR = UNRESERVED | PCT_ENCODED | SUB_DELIMS | ":" | "@" ;
+    EOF { url_str--; return; }
+    "" { return; }
+    IPV4ADDR {
+        url->host->type = IPV4ADDR;
+        goto host;
+    }
+    IPV6ADDR {
+        url->host->type = IPV6ADDR;
+        incr = 1;
+        goto host;
+    }
+    IPVFUTURE {
+        url->host->type = IPVFUTUR;
+        incr = 1;
+        goto host;
+    }
+    REG_NAME {
+        url->host->type = REGNAME;
+        goto host;
+    }
+*/
+host:;
+    int len = url_str - marker;
 
-  SEGMENT_NZ_NC = ( UNRESERVED | PCT_ENCODED | SUB_DELIMS | "@")+;
-  SEGMENT_NZ = PCHAR+;
-  SEGMENT = PCHAR*;
+    if (incr) {
+        len -= 2;
+        marker++;
+    }
 
-  USERINFO = UNRESERVED | PCT_ENCODED | SUB_DELIMS | ":";
+    char* host = get_token(len);
+    strncpy (url->host->name, host, HOST_MAX_LEN < len + 1 ? HOST_MAX_LEN : len + 1);
+    free (host);
+}
 
-  IPV4SEG  = DIGIT | [1-9] DIGIT | "1" DIGIT{2} | "2" [0-4] DIGIT | "25" [0-5] ;
-  IPV4ADDR = (IPV4SEG"."){3}IPV4SEG;
-  IPV6SEG  = [0-9a-fA-F]{1,4};
-  IPV6ADDR = "[" (
-    (IPV6SEG":"){7,7}IPV6SEG|                       // 1:2:3:4:5:6:7:8
-    (IPV6SEG":"){1,7}":"|                           // 1::                                 1:2:3:4:5:6:7::
-    (IPV6SEG":"){1,6}":"IPV6SEG|                    // 1::8               1:2:3:4:5:6::8   1:2:3:4:5:6::8
-    (IPV6SEG":"){1,5}(":"IPV6SEG){1,2}|             // 1::7:8             1:2:3:4:5::7:8   1:2:3:4:5::8
-    (IPV6SEG":"){1,4}(":"IPV6SEG){1,3}|             // 1::6:7:8           1:2:3:4::6:7:8   1:2:3:4::8
-    (IPV6SEG":"){1,3}(":"IPV6SEG){1,4}|             // 1::5:6:7:8         1:2:3::5:6:7:8   1:2:3::8
-    (IPV6SEG":"){1,2}(":"IPV6SEG){1,5}|             // 1::4:5:6:7:8       1:2::4:5:6:7:8   1:2::8
-    IPV6SEG":"((":"IPV6SEG){1,6})|                  // 1::3:4:5:6:7:8     1::3:4:5:6:7:8   1::8
-    ":"((":"IPV6SEG){1,7}|":")|                     // ::2:3:4:5:6:7:8    ::2:3:4:5:6:7:8  ::8
-    "fe80:"(":"IPV6SEG){0,4}"%"[0-9a-zA-Z]{1,}|     // fe80::7:8%eth0     fe80::7:8%1
-    "::"("ffff"(":0"{1,4}){0,1}":"){0,1}IPV4ADDR|   // ::255.255.255.255  ::ffff:255.255.255.255  ::ffff:0:255.255.255.255
-    (IPV6SEG":"){1,4}":"IPV4ADDR                    // 2001:db8:3:4::192.0.2.33  64:ff9b::192.0.2.33
-  ) "]";
+void url_parse_authority_port (URL *url)
+{
+    marker = url_str;
+/*!re2c
 
-  H16 = HEXDIG{1,4};
+    EOF { url_str--; return; }
+    "" { return; }
+    ":" DIGIT* {
+        marker++;
+        int len = url_str - marker;
+        char* port = get_token(len);
+        url->port = atoi(port);
+        free(port);
+    }
+*/
+}
 
-  REGNAME = UNRESERVED | PCT_ENCODED | SUB_DELIMS ;
-
-  // scheme
-  * { --url_str; goto hier_part; }
-  EOF { return 0;}
-  ALPHA (ALPHA | DIGIT | [+.-])* ":" {
-    int len = url_str - src - 1;
-    url->scheme = get_lex(src, &pos, len);
-    pos++; // add ":"
-    goto hier_part;
-  }
+int url_parse_authority (URL *url)
+{
+/*!re2c
+    EOF { url_str--; return 0; }
+    "" { return 0; }
+    "//" {
+        goto authority;
+    }
 */
 
-hier_part:
-/*!re2c
-  * { --url_str; goto hier_part_host; }
-  EOF { return 0; }
-  "//"  { pos +=2; goto hier_part_authority; }
-*/
+authority:;
+    url_parse_authority_userinfo(url);
+    url_parse_authority_host(url);
+    url_parse_authority_port(url);
 
-hier_part_authority:
-/*!re2c
-  * { url_str--; goto hier_part_host; }
-  EOF { return 0;}
-  USERINFO* "@" {
-    int len = url_str - src - pos - 1; // unshift 1 char for "@"
-    url->userinfo = get_lex(src, &pos, len);
-    pos++; // shift for "@" char
-    goto hier_part_host;
-  }
-*/
+    if (url->host->type != UNKNOWN) {
+        return 1;
+    } else {
+        if (url->userinfo) free(url->userinfo);
+        memset(&url->host->type, 0, sizeof(url->host->type));
+        url->port = 0;
+        return 0;
+    }
+}
 
-hier_part_host:
+int url_parse_path (URL *url)
+{
+    marker = url_str;
 /*!re2c
-  * { goto hier_part_path; }
-  EOF { return 0;}
-  "" / "/" {
-    url->host->type = UNKNOWN;
-    goto hier_part_path;
-  }
-  IPV4ADDR {
-    int len = url_str - src - pos;
-    url->host->type = IPV4ADDR;
-    char *name = get_lex(src, &pos, len);
-    strncpy (url->host->name, name, HOST_MAX_LEN < len + 1 ? HOST_MAX_LEN : len + 1);
-    free (name);
-    goto hier_part_port;
-  }
-  "[v" [^\]]+ "]" {
-    pos++; // shift "["
-    int len = url_str - src - pos - 1;
-    url->host->type = IPVFUTUR;
-    char *name = get_lex(src, &pos, len);
-    pos++;
-    strncpy (url->host->name, name, HOST_MAX_LEN < len + 1 ? HOST_MAX_LEN : len + 1);
-    free (name);
-    goto hier_part_port;
-  }
-  IPV6ADDR {
-    pos++; // shift "["
-    int len = url_str - src - pos - 1; // skip "]"
-    url->host->type = IPV6ADDR;
-    char *name = get_lex(src, &pos, len);
-    pos++;
-    strncpy (url->host->name, name, HOST_MAX_LEN < len + 1 ? HOST_MAX_LEN : len + 1);
-    free (name);
-    goto hier_part_port;
-  }
-  REGNAME+ {
-    int len = url_str - src - pos;
-    url->host->type = REGNAME;
-    char *name = get_lex(src, &pos, len);
-    strncpy (url->host->name, name, HOST_MAX_LEN < len + 1 ? HOST_MAX_LEN : len + 1);
-    free (name);
-    goto hier_part_port;
-  }
-*/
+    SEGMENT_NZ_NC = (UNRESERVED | PCT_ENCODED | SUB_DELIMS | "@")+;
+    SEGMENT_NZ = PCHAR+;
+    SEGMENT = PCHAR*;
+    PATH_ABEMPTY = ("/" SEGMENT)*;
+    PATH_ABSOLUTE = "/" (SEGMENT_NZ ("/" SEGMENT)*)?;
+    PATH_NOSCHEME = SEGMENT_NZ_NC ("/" SEGMENT)*;
+    PATH_ROOTLESS = SEGMENT_NZ ("/" SEGMENT)*;
+    PATH = PATH_ABEMPTY | PATH_ABSOLUTE | PATH_NOSCHEME | PATH_ROOTLESS;
 
-hier_part_port:
-/*!re2c
-  EOF {
-    url->valid = 1;
-    return 1;
-  }
-  "" { goto hier_part_path; }
-  ":" DIGIT* {
-    pos++; // shift ":"
-    int len = url_str - src - pos;
-    char *port = get_lex(src, &pos, len);
-    url->port = atoi (port);
-    free (port);
-    goto hier_part_path;
-  }
+    EOF { url_str--; return 0; }
+    "" { return 0; }
+    PATH {
+        int len = url_str - marker;
+        url->path = get_token(len);
+        return 1;
+    }
 */
+}
 
-hier_part_path:
+void url_parse_query_frag (URL *url)
+{
+query_frag:;
+    marker = url_str;
 /*!re2c
-  EOF {
-    url->valid = 1;
-    return 1;
-  }
-  * {goto query_frag;}
-  ("/" SEGMENT)+ {
-    int len = url_str - src - pos;
-    url->path = get_lex(src, &pos, len);
-    goto query_frag;
-  }
-*/
+    QUERY = "?" (PCHAR | "/" | "?")*;
+    FRAGMENT = "#" (PCHAR | "/" | "?")*;
 
-query_frag:
-/*!re2c
-  * { return 0; }
-  EOF {
-    url->valid = 1;
-    return 1;
-  }
-  "?" (PCHAR | [/?])* {
-    pos++; // shift "?"
-    int len = url_str - src - pos;
-    url->query = get_lex(src, &pos, len);
-    goto query_frag;
-  }
-  "#" (PCHAR | [/?])* {
-    pos++; // shift "#"
-    int len = url_str - src - pos;
-    url->fragment = get_lex(src, &pos, len);
-    return 1;
-  }
+    EOF { url_str--; return; }
+    "" { return; }
+    QUERY {
+        marker++;
+        int len = url_str - marker;
+        url->query = get_token(len);
+        goto query_frag;
+    }
+    FRAGMENT {
+        marker++;
+        int len = url_str - marker;
+        url->fragment = get_token(len);
+        return;
+    }
 */
-  return 0;
+}
+
+int url_parse (const char *input, URL *url)
+{
+    int retval = 0;
+    url_str = input;
+
+    if (url_parse_scheme(url)) {
+        url_parse_authority(url);
+        url_parse_path(url);
+        url_parse_query_frag(url);
+        retval = 1;
+    } else {
+        if (url_parse_authority(url)) {
+            url_parse_path(url);
+            url_parse_query_frag(url);
+            retval = 1;
+        } else if (strlen(url_str) && url_parse_path(url)) {
+            url_parse_query_frag(url);
+            retval = 1;
+        }
+    }
+    return retval;
 }
 
 URL *url_create ()
 {
-  URL *url = (URL*) malloc (sizeof(URL));
-  url->scheme   = NULL;
-  url->userinfo = NULL;
-  url->host = (Host*) malloc (sizeof(Host));
-  url->port = 0;
-  url->path = NULL;
-  url->query = NULL;
-  url->fragment = NULL;
-  url->valid = 0;
-  return url;
+    URL *url = (URL*) malloc (sizeof(URL));
+    url->host = (Host*) malloc (sizeof(Host));
+
+    url->scheme   = NULL;
+    url->userinfo = NULL;
+    url->host->type = UNKNOWN;
+    memset(&url->host->type, 0, sizeof(url->host->type));
+    url->port = 0;
+    url->path = NULL;
+    url->query = NULL;
+    url->fragment = NULL;
+
+    return url;
 }
 
 void url_free (URL *url)
 {
-  if (url->scheme) free (url->scheme);
-  if (url->userinfo) free (url->userinfo);
-  if (url->host) free (url->host);
-  if (url->path) free (url->path);
-  if (url->query) free (url->query);
-  if (url->fragment) free (url->fragment);
-  free (url);
+    if (url->scheme) free (url->scheme);
+    if (url->userinfo) free (url->userinfo);
+    if (url->host) free (url->host);
+    if (url->path) free (url->path);
+    if (url->query) free (url->query);
+    if (url->fragment) free (url->fragment);
+    free (url);
 }
 
-char * get_lex(const char *url, int *from, int len)
+char * get_token(int len)
 {
-  char *res = (char *) malloc (len + 1);
-  int i;
-  for (i = 0; i < len; i++)
-  {
-    res[i] = url[*from + i];
-  }
-  res[i] = '\0';
-  *from += len;
-  return res;
+    char *res = (char *) malloc (len + 1);
+    int i = 0;
+    for (; i < len; i++) res[i] = marker[i];
+    res[i] = '\0';
+    return res;
 }
